@@ -115,7 +115,7 @@ global.runtime = function(seconds) {
 
 global.loadConnect = async function(t) {
   try {
-    await t.newsletterFollow("120363367787013309@newsletter");
+    await t.newsletterFollow("120363404741298748@newsletter");
   } catch (e) {
     console.error("Gagal follow newsletter:", e);
   }
