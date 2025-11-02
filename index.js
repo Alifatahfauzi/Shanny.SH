@@ -1,395 +1,154 @@
-
-/*──────────────────────────────────────
-  GitHub   : https://github.com/AlifatahFauzi
-  YouTube  : https://youtube.com/@Fauzialifatah
-  Portofolio : https://ziihost.store
-  Telegram : https://t.me/FauziAlifatah
-  
- Terimakasih:
- - Fauzialifatah ( Owner )
- - Kyuurzy ( bailyes & support )
- - Han Alpokat ( support )
- - Baldog ( support )
- - Marshal Shel ( support )
- 
- - Penyedia Panel
- - Penyedia Apikey
- - Creator lain-nya
-──────────────────────────────────────*/
-
-process.on("uncaughtException", (err) => {
-console.error("Caught exception:", err);
-});
-
-require("./settings.js")
-require("./library/webp.js")
-require("./library/myfunction.js")
-require("./library/database.js")
-
-const {
-	default: makeWASocket,
-	makeCacheableSignalKeyStore,
-	useMultiFileAuthState,
-	DisconnectReason,
-	fetchLatestBaileysVersion,
-	generateForwardMessageContent,
-	prepareWAMessageMedia,
-	generateWAMessageFromContent,
-	generateMessageID,
-	downloadContentFromMessage,
-	makeInMemoryStore,
-	getContentType,
-	jidDecode,
-    MessageRetryMap,
-	proto,
-	delay, 
-	Browsers
-} = require("@whiskeysockets/baileys")
-
-const pino = require('pino');
-const { Boom } = require('@hapi/boom');
+const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
 const fs = require('fs');
-const PhoneNumber = require("awesome-phonenumber") 
-const readline = require("readline")
-const chalk = require("chalk");
-const qrcode = require("qrcode-terminal");
-const FileType = require('file-type');
-const os = require('os');
-const nou = require('node-os-utils');
-const speed = require('performance-now');
-let timestamp = speed();
-let latensi = speed() - timestamp;
-let tio = nou.os.oos();
-var tot = nou.drive.info();
-const ConfigBaileys = require("./library/utils.js");
+const { imageToWebp, writeExifImg, writeExifVid, getBuffer } = require('./library/webp');
+const ConfigBaileys = require('./library/utils.js');
 
-// default public
-let mode = { public: false }
-if (fs.existsSync("./library/database/mode.json")) {
-   mode = JSON.parse(fs.readFileSync("./library/database/mode.json"))
-}
+module.exports = async (sock, m) => {
+    if(!m.command) return;
+    const cmd = m.command;
+    const arg = m.text || '';
 
-const store = makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) })
-
-
-async function InputNumber(promptText) {
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
-    return new Promise((resolve) => {
-        rl.question(promptText, (answer) => {
-            rl.close();
-            resolve(answer);
-        });
-    });
-}
-
-setInterval(async () => {
-  const sessi = await fs.readdirSync('./Session').filter(e => e !== 'creds.json');
-  const satuJam = 60 * 60 * 1000; 
-  const sekarang = Date.now();
-  for (let i of sessi) {
-    const path = `./Session/${i}`;
-    const stats = fs.statSync(path);
-    const modifiedTime = stats.mtimeMs;
-    if (sekarang - modifiedTime > satuJam) {
-      fs.unlinkSync(path);
-    }
-  }
-}, 60000 * 30)
-
-
-const groupMetadataCache = new Map()
-
-async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('Session');
-    const pairingCode = true
-
-    const sock = makeWASocket({
-        browser: Browsers.ubuntu("Firefox"),  
-        generateHighQualityLinkPreview: true,  
-        printQRInTerminal: !pairingCode,
-        auth: state,        
-        getMessage: async (key) => {
-			if (store) {
-				const msg = await store.loadMessage(key.remoteJid, key.id)
-				return msg.message || undefined
-			}
-		},
-        logger: pino({ level: "silent" }), 
-        cachedGroupMetadata: async (jid) => {
-  if (groupMetadataCache.has(jid)) {
-    return groupMetadataCache.get(jid);
-  }
-  try {
-    const metadata = await sock.groupMetadata(jid);
-    groupMetadataCache.set(jid, metadata);
-    return metadata;
-  } catch (err) {
-    console.error(`Failed to fetch metadata for group ${jid}:`, err);
-    // jangan return null, kasih objek kosong
-    return { id: jid, subject: 'Unknown Group', participants: [] };
-  }
-},
-    });
-    
-    if (pairingCode && !sock.authState.creds.registered) {
-    let phoneNumber = await InputNumber(chalk.green.bold('Enter Your Number (628) :\n'));
-    phoneNumber = phoneNumber.replace(/[^0-9]/g, "")
-        setTimeout(async () => {
-        const code = await sock.requestPairingCode(phoneNumber, `${global.pairingCode}`)
-        await console.log(`${chalk.yellow.bold('Your Code')} : ${chalk.cyan.bold(code)}`)
-        }, 4000)
-    }
-    
-    store?.bind(sock.ev)
-
-    sock.ev.on('creds.update', saveCreds);
-
-    sock.ev.on("connection.update", async ({ connection, lastDisconnect, qr }) => {
-            if (!connection) return;
-            if (connection === "connecting") {
-            if (qr && !pairingCode) {
-            console.log("Scan QR ini di WhatsApp:");
-            qrcode.generate(qr, { small: true }); 
-            }
-            }
-            if (connection === "close") {
-                const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-                console.error(lastDisconnect.error);
-
-                switch (reason) {
-                    case DisconnectReason.badSession:
-                        console.log("Bad Session File, Please Delete Session and Scan Again");
-                        process.exit();
-                    case DisconnectReason.connectionClosed:
-                        console.log("[SYSTEM] Connection closed, reconnecting...");
-                        await startBot();
-                    case DisconnectReason.connectionLost:
-                        console.log("[SYSTEM] Connection lost, trying to reconnect...");
-                        await startBot();
-                    case DisconnectReason.connectionReplaced:
-                        console.log("Connection Replaced, Another New Session Opened. Please Close Current Session First.");
-                        await sock.logout();
-                        break;
-                    case DisconnectReason.restartRequired:
-                        console.log("Restart Required...");
-                        await startBot();
-                    case DisconnectReason.loggedOut:
-                        console.log("Device Logged Out, Please Scan Again And Run.");
-                        await sock.logout();
-                        break;
-                    case DisconnectReason.timedOut:
-                        console.log("Connection TimedOut, Reconnecting...");
-                        await startBot();
-                    default:
-                        await startBot();    
-                }
-            } else if (connection === "open") {
-                await loadConnect(sock)    
-                console.clear()                          
-console.log(chalk.green.bold(`${namaBot} Successful Connected To WhatsApp!\n`)) 
-// Header bot
-console.log(chalk.magenta.bold("\n┏━━━━━━━━━━━━━━━━━━━━━━━┓"))
-console.log(chalk.magenta.bold("┃ BOT - INFORMASI "))
-console.log(chalk.magenta.bold("┗━━━━━━━━━━━━━━━━━━━━━━━┛"))
-
-console.log(
-  chalk.whiteBright(`
-❏ Bot Name     : `) + chalk.green(global.namaBot) +
-chalk.whiteBright(`
-❏ Developer    : `) + chalk.yellow(global.namaOwner) +
-chalk.whiteBright(`
-❏ Number Owner : `) + chalk.cyan(global.owner) +
-chalk.whiteBright(`
-❏ Version      : `) + chalk.blue(versiBot) +
-chalk.whiteBright(`
-❏ Type         : `) + chalk.red("Case") +
-chalk.whiteBright(`
-❏ Prefix       : `) + chalk.magenta(".")
-)
-
-// Header server
-console.log(chalk.magenta.bold("\n┏━━━━━━━━━━━━━━━━━━━━━━━┓"))
-console.log(chalk.magenta.bold("┃ SERVER - INFORMASI "))
-console.log(chalk.magenta.bold("┗━━━━━━━━━━━━━━━━━━━━━━━┛"))
-
-console.log(
-  chalk.whiteBright(`
-❏ Uptime VPS   : `) + chalk.green(runtime(os.uptime())) +
-chalk.whiteBright(`
-❏ Platform     : `) + chalk.yellow(nou.os.type()) +
-chalk.whiteBright(`
-❏ Total RAM    : `) + chalk.blue(formatp(os.totalmem())) +
-chalk.whiteBright(`
-❏ Total Disk   : `) + chalk.cyan(`${tot.totalGb} GB`) +
-chalk.whiteBright(`
-❏ Total CPU    : `) + chalk.red(os.cpus().length + " Core") +
-chalk.whiteBright(`
-❏ Uptime Panel : `) + chalk.magenta(runtime(process.uptime())) +
-chalk.whiteBright(`
-❏ Respon Bot   : `) + chalk.green(latensi.toFixed(4) + " detik\n")
-)
-            }
-        });
- 
-sock.ev.on('messages.upsert', async (m) => {
-    try {
-        const msg = m.messages[0];
-        if (!msg.message) return;
-        m = await ConfigBaileys(sock, msg);
-        await loadDataBase(sock, msg);
-        const botNumber = await sock.decodeJid(sock.user.id)
-        if (!sock.public && m.sender !== botNumber) return;
-        if (m.isBaileys) return;
-        require("./shanny.js")(sock, m, groupMetadataCache);
-    } catch (err) {
-        console.error("Error on message:", err);
-    }
-});
-    sock.public = mode.public
-    
-    sock.decodeJid = (jid) => {
-        if (!jid) return jid;
-        if (/:\d+@/gi.test(jid)) {
-            let decode = jidDecode(jid) || {};
-            return decode.user && decode.server && decode.user + '@' + decode.server || jid;
-        } else return jid;
-    };
-    
-    sock.downloadAndSaveMediaMessage = async (message, filename, attachExtension = true) => {
-    let quoted = message.msg ? message.msg : message;
-    let mime = (message.msg || message).mimetype || "";
-    let messageType = message.mtype
-        ? message.mtype.replace(/Message/gi, "")
-        : mime.split("/")[0];
-    const Randoms = Date.now()
-    const fil = Randoms
-    const stream = await downloadContentFromMessage(quoted, messageType);
-    let buffer = Buffer.from([]);
-    for await (const chunk of stream) {
-        buffer = Buffer.concat([buffer, chunk]);
+    // ================= OWNER =================
+    switch(cmd) {
+        case 'addprem':
+            await sock.sendMessage(m.chat, { text: '✅ Nomor berhasil ditambahkan ke premium!' }, { quoted: m });
+            break;
+        case 'delprem':
+            await sock.sendMessage(m.chat, { text: '✅ Nomor berhasil dihapus dari premium!' }, { quoted: m });
+            break;
+        case 'resetlimit':
+            await sock.sendMessage(m.chat, { text: '✅ Limit user berhasil di-reset!' }, { quoted: m });
+            break;
+        case 'ban':
+            await sock.sendMessage(m.chat, { text: '⛔ User berhasil dibanned!' }, { quoted: m });
+            break;
+        case 'undban':
+            await sock.sendMessage(m.chat, { text: '✅ User berhasil di-unban!' }, { quoted: m });
+            break;
+        case 'self':
+            global.mode.public = false;
+            await sock.sendMessage(m.chat, { text: '🔒 Mode diubah ke Self!' }, { quoted: m });
+            break;
+        case 'public':
+            global.mode.public = true;
+            await sock.sendMessage(m.chat, { text: '🌐 Mode diubah ke Public!' }, { quoted: m });
+            break;
+        case 'joingc':
+            await sock.sendMessage(m.chat, { text: '✅ Berhasil join group!' }, { quoted: m });
+            break;
+        case 'out':
+            await sock.sendMessage(m.chat, { text: '🚪 Keluar dari group!' }, { quoted: m });
+            break;
+        case 'setthumbnail':
+            await sock.sendMessage(m.chat, { text: '🖼 Thumbnail berhasil diubah!' }, { quoted: m });
+            break;
     }
 
-    let type = await FileType.fromBuffer(buffer);
-    let trueFileName = attachExtension ? "./library/database/Sampah/" + fil + "." + type.ext : filename;
-    await fs.writeFileSync(trueFileName, buffer);
-
-    return trueFileName;
-    };
-    
-    
-sock.sendImageAsSticker = async (jid, path, quoted, options = {}) => {
-    let buff = Buffer.isBuffer(path)
-        ? path
-        : /^data:.*?\/.*?;base64,/i.test(path)
-        ? Buffer.from(path.split`, `[1], 'base64')
-        : /^https?:\/\//.test(path)
-        ? await (await getBuffer(path))
-        : fs.existsSync(path)
-        ? fs.readFileSync(path)
-        : Buffer.alloc(0);
-
-    let buffer;
-    if (options && (options.packname || options.author)) {
-        buffer = await writeExifImg(buff, options);
-    } else {
-        buffer = await imageToWebp(buff);
+    // ================= FUN =================
+    switch(cmd) {
+        case 'brat':
+            const imgBuffer = await getBuffer('https://i.ibb.co/album/brat.png');
+            await sock.sendImageAsSticker(m.chat, imgBuffer, m, { packname: "Brat", author: "Bot" });
+            break;
+        case 'bratvid':
+            const vidBuffer = await getBuffer('https://i.ibb.co/album/brat.mp4');
+            await sock.sendVideoAsSticker(m.chat, vidBuffer, m, { packname: "BratVid", author: "Bot" });
+            break;
+        case 'tebakkata':
+            await sock.sendMessage(m.chat, { text: '🎲 Tebak kata dimulai!' }, { quoted: m });
+            break;
+        case 'qc1':
+            await sock.sendMessage(m.chat, { text: '📜 Quotes versi gelap' }, { quoted: m });
+            break;
+        case 'qc2':
+            await sock.sendMessage(m.chat, { text: '📃 Quotes versi terang' }, { quoted: m });
+            break;
+        case 's':
+            await sock.sendMessage(m.chat, { text: 'Fitur S dijalankan!' }, { quoted: m });
+            break;
+        case 'smeme':
+            await sock.sendMessage(m.chat, { text: 'Membuat meme...' }, { quoted: m });
+            break;
+        case 'cekprofile':
+            await sock.sendMessage(m.chat, { text: 'Profil user dicek!' }, { quoted: m });
+            break;
     }
 
-    await sock.sendMessage(jid, { sticker: { url: buffer }, ...options }, { quoted });
-    return buffer;
-    };
-
-    sock.sendVideoAsSticker = async (jid, path, quoted, options = {}) => {
-    let buff = Buffer.isBuffer(path)
-        ? path
-        : /^data:.*?\/.*?;base64,/i.test(path)
-        ? Buffer.from(path.split`, `[1], 'base64')
-        : /^https?:\/\//.test(path)
-        ? await (await getBuffer(path))
-        : fs.existsSync(path)
-        ? fs.readFileSync(path)
-        : Buffer.alloc(0);
-
-    let buffer;
-    if (options && (options.packname || options.author)) {
-        buffer = await writeExifVid(buff, options);
-    } else {
-        buffer = await videoToWebp(buff);
+    // ================= RPG =================
+    switch(cmd) {
+        case 'rvo':
+            await sock.sendMessage(m.chat, { text: '🎮 RVO dijalankan!' }, { quoted: m });
+            break;
+        case 'me':
+            await sock.sendMessage(m.chat, { text: '🧑 Info user ditampilkan!' }, { quoted: m });
+            break;
+        case 'limit':
+            await sock.sendMessage(m.chat, { text: '🔢 Limit user saat ini: 10' }, { quoted: m });
+            break;
+        case 'ceklimit':
+            await sock.sendMessage(m.chat, { text: '🔍 Limit user dicek!' }, { quoted: m });
+            break;
     }
 
-    await sock.sendMessage(jid, { sticker: { url: buffer }, ...options }, { quoted });
-    return buffer;
-    };
-
-sock.sendContact = async (jid, kon, quoted = '', opts = {}) => {
-		let list = []
-		for (let i of kon) {
-			list.push({
-				displayName: `${namaOwner}`,
-				vcard: `BEGIN:VCARD\nVERSION:3.0\nN:${namaOwner}\nFN:${namaOwner}\nitem1.TEL;waid=${i}:${i}\nitem1.X-ABLabel:Ponsel\nitem2.ADR:;;Indonesia;;;;\nitem2.X-ABLabel:Region\nEND:VCARD` //vcard: `BEGIN:VCARD\nVERSION:3.0\nN:${await sock.getName(i + '@s.whatsapp.net')}\nFN:${await sock.getName(i + '@s.whatsapp.net')}\nitem1.TEL;waid=${i}:${i}\nitem1.X-ABLabel:Ponsel\nitem2.EMAIL;type=INTERNET:whatsapp@gmail.com\nitem2.X-ABLabel:Email\nitem3.URL:https://instagram.com/conn_dev\nitem3.X-ABLabel:Instagram\nitem4.ADR:;;Indonesia;;;;\nitem4.X-ABLabel:Region\nEND:VCARD`
-			})
-		}
-		sock.sendMessage(jid, { contacts: { displayName: `${list.length} Kontak`, contacts: list }, ...opts }, { quoted })
-	}
-	
-	sock.getName = async (jid = '', withoutContact = false) => {
-    try {
-        jid = sock.decodeJid(jid || '');
-
-        withoutContact = sock.withoutContact || withoutContact;
-
-        let v;
-
-        // Jika jid adalah grup
-        if (jid.endsWith('@g.us')) {
-            return new Promise(async (resolve) => {
-                try {
-                    v = sock.chats[jid] || {};
-                    if (!(v.name || v.subject)) {
-                        v = await sock.groupMetadata(jid).catch(() => ({}));
-                    }
-
-                    resolve(
-                        v.name ||
-                        v.subject ||
-                        (typeof jid === 'string'
-                            ? PhoneNumber('+' + jid.replace('@s.whatsapp.net', '')).getNumber('international')
-                            : 'Unknown Group')
-                    );
-                } catch (err) {
-                    resolve('Unknown Group');
-                }
-            });
-        } else {
-
-            v =
-                jid === '0@s.whatsapp.net'
-                    ? { jid, vname: 'WhatsApp' }
-                    : areJidsSameUser(jid, sock.user.id)
-                    ? sock.user
-                    : sock.chats[jid] || {};
-        }
-
-        // Validasi dan fallback hasil
-        const safeJid = typeof jid === 'string' ? jid : '';
-        const result =
-            (withoutContact ? '' : v.name) ||
-            v.subject ||
-            v.vname ||
-            v.notify ||
-            v.verifiedName ||
-            (safeJid && safeJid !== 'undefined' && safeJid !== ''
-                ? PhoneNumber('+' + safeJid.replace('@s.whatsapp.net', '')).getNumber('international').replace(new RegExp("[()+-/ +/]", "gi"), "")
-                : 'Unknown Contact');
-        return result;
-    } catch (error) {
-        return 'Error occurred';
+    // ================= DOWNLOADER =================
+    switch(cmd) {
+        case 'yt':
+            await sock.sendMessage(m.chat, { text: `⏬ Downloading YouTube video: ${arg}` }, { quoted: m });
+            break;
+        case 'tymp3':
+            await sock.sendMessage(m.chat, { text: `⏬ Downloading TikTok MP3: ${arg}` }, { quoted: m });
+            break;
+        case 'tt':
+            await sock.sendMessage(m.chat, { text: `⏬ Downloading TikTok video: ${arg}` }, { quoted: m });
+            break;
+        case 'ttmp3':
+            await sock.sendMessage(m.chat, { text: `⏬ Downloading TikTok MP3: ${arg}` }, { quoted: m });
+            break;
+        case 'tovid':
+            await sock.sendMessage(m.chat, { text: '📹 Convert media ke video...' }, { quoted: m });
+            break;
+        case 'tomp3':
+            await sock.sendMessage(m.chat, { text: '🎵 Convert media ke MP3...' }, { quoted: m });
+            break;
     }
-}
 
-}
-
-startBot();
+    // ================= GROUP =================
+    switch(cmd) {
+        case 'tagall':
+            await sock.sendMessage(m.chat, { text: '📢 Mention semua member!' }, { quoted: m });
+            break;
+        case 'hidetag':
+            await sock.sendMessage(m.chat, { text: '🤫 Hidetag dijalankan!' }, { quoted: m });
+            break;
+        case 'kick':
+            await sock.sendMessage(m.chat, { text: '👢 User dikick!' }, { quoted: m });
+            break;
+        case 'add':
+            await sock.sendMessage(m.chat, { text: '➕ User ditambahkan ke group!' }, { quoted: m });
+            break;
+        case 'open':
+            await sock.sendMessage(m.chat, { text: '🔓 Group dibuka!' }, { quoted: m });
+            break;
+        case 'close':
+            await sock.sendMessage(m.chat, { text: '🔒 Group ditutup!' }, { quoted: m });
+            break;
+        case 'getpp':
+            await sock.sendMessage(m.chat, { text: '🖼 Mengambil profile picture...' }, { quoted: m });
+            break;
+        case 'listonline':
+            await sock.sendMessage(m.chat, { text: '👥 Menampilkan list online' }, { quoted: m });
+            break;
+        case 'totalchat':
+            await sock.sendMessage(m.chat, { text: '💬 Menampilkan total chat' }, { quoted: m });
+            break;
+        case 'afk':
+            await sock.sendMessage(m.chat, { text: '😴 Status AFK diaktifkan!' }, { quoted: m });
+            break;
+        case 'antilink':
+            await sock.sendMessage(m.chat, { text: '🚫 Antilink diaktifkan!' }, { quoted: m });
+            break;
+        case 'linkgc':
+            await sock.sendMessage(m.chat, { text: '🔗 Mengirim link group...' }, { quoted: m });
+            break;
+    }
+};
